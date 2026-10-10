@@ -89,7 +89,24 @@ async def check_reminders(context: ContextTypes.DEFAULT_TYPE):
     except Exception as e:
         logger.error(f"Reminder System Error: {e}")
 
+import threading
+from http.server import BaseHTTPRequestHandler, HTTPServer
+
+class HealthCheckHandler(BaseHTTPRequestHandler):
+    def do_GET(self):
+        self.send_response(200)
+        self.end_headers()
+        self.wfile.write(b"Bot is running 24/7!")
+        
+def run_dummy_server():
+    port = int(os.getenv("PORT", 8080))
+    server = HTTPServer(("0.0.0.0", port), HealthCheckHandler)
+    server.serve_forever()
+
 def main() -> None:
+    # Start dummy server for Cloud Health Checks
+    threading.Thread(target=run_dummy_server, daemon=True).start()
+    
     application = Application.builder().token(TELEGRAM_BOT_TOKEN).build()
     
     application.add_handler(CommandHandler("start", start))
@@ -98,7 +115,7 @@ def main() -> None:
     # Run the reminder checker every 30 seconds in the background
     application.job_queue.run_repeating(check_reminders, interval=30, first=10)
     
-    logger.info("✅ 24/7 Agent is online with Scheduler...")
+    logger.info("✅ 24/7 Agent is online with Scheduler and Cloud Health Server...")
     application.run_polling(allowed_updates=Update.ALL_TYPES)
 
 if __name__ == "__main__":
