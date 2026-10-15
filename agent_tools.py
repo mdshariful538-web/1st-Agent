@@ -7,8 +7,40 @@ def init_db():
     conn = sqlite3.connect("memory.db")
     cursor = conn.cursor()
     cursor.execute('''CREATE TABLE IF NOT EXISTS notes (id INTEGER PRIMARY KEY, title TEXT, content TEXT)''')
-    # নতুন টেবিল: রিমাইন্ডার সেভ করার জন্য
     cursor.execute('''CREATE TABLE IF NOT EXISTS reminders (id INTEGER PRIMARY KEY, message TEXT, remind_at TIMESTAMP, is_sent INTEGER DEFAULT 0)''')
+    
+    # Tables for Daily AI News and Hackathons
+    cursor.execute('''CREATE TABLE IF NOT EXISTS daily_news (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        publish_date TEXT NOT NULL,
+        category TEXT NOT NULL,
+        title TEXT NOT NULL,
+        source_name TEXT NOT NULL,
+        url TEXT UNIQUE NOT NULL,
+        cached_summary TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+    cursor.execute('''CREATE INDEX IF NOT EXISTS idx_daily_news_date ON daily_news(publish_date)''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS daily_events (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        event_name TEXT NOT NULL,
+        organizer TEXT NOT NULL,
+        location_type TEXT NOT NULL,
+        prize_pool TEXT,
+        deadline TEXT,
+        url TEXT UNIQUE NOT NULL,
+        status TEXT DEFAULT 'ACTIVE',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+
+    cursor.execute('''CREATE TABLE IF NOT EXISTS user_selection_state (
+        user_id INTEGER PRIMARY KEY,
+        active_message_id INTEGER NOT NULL,
+        selected_news_ids TEXT NOT NULL,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )''')
+
     conn.commit()
     conn.close()
 

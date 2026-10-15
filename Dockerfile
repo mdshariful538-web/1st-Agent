@@ -1,5 +1,8 @@
 FROM python:3.11-slim
 
+# Set timezone to Asia/Dhaka
+ENV TZ=Asia/Dhaka
+
 # Set the working directory
 WORKDIR /app
 
