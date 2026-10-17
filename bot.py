@@ -108,51 +108,87 @@ def build_news_keyboard(user_id: int, news_items: list) -> InlineKeyboardMarkup:
     
     return InlineKeyboardMarkup(keyboard)
 
+import asyncio
+import html
+
+async def safe_send_message(bot, chat_id: int, text: str, reply_markup=None, disable_web_page_preview=False):
+    """Safely sends a message using HTML mode with automatic plain-text fallback."""
+    try:
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=text,
+            reply_markup=reply_markup,
+            parse_mode="HTML",
+            disable_web_page_preview=disable_web_page_preview
+        )
+    except Exception as e:
+        logger.warning(f"Telegram HTML send failed ({e}), sending plain text...")
+        clean_text = text.replace("<b>", "").replace("</b>", "").replace("<i>", "").replace("</i>", "")
+        return await bot.send_message(
+            chat_id=chat_id,
+            text=clean_text,
+            reply_markup=reply_markup,
+            disable_web_page_preview=disable_web_page_preview
+        )
+
 async def send_daily_news_digest(bot, chat_id: int):
     """
     Core function that collects Top 20 Global AI News and BD/Global Remote Hackathons,
     then dispatches two separate, beautifully formatted messages.
     """
     logger.info("Starting Daily AI News & Hackathons Digest dispatch...")
+    loop = asyncio.get_running_loop()
     
-    # 1. Collect Top 20 Global AI News
-    news_items = collect_top_20_ai_news()
+    # 1. Collect Top 20 Global AI News in background thread
+    news_items = await loop.run_in_executor(None, collect_top_20_ai_news)
     today_str = get_current_date_str()
     
     # Reset user selection for the new day
     USER_SELECTIONS[chat_id] = set()
     
+    if not news_items:
+        await bot.send_message(chat_id=chat_id, text="⚠️ আজকের এআই নিউজগুলো লোড হতে একটু সময় নিচ্ছে। অনুগ্রহ করে কয়েক মিনিট পর আবার চেষ্টা করুন।")
+        return
+        
     news_header = (
-        f"🌅 **শুভ সকাল! আজকের শীর্ষ ২০টি এআই ও ওপেন-সোর্স আপডেট**\n"
-        f"📅 *তারিখ: {today_str}*\n"
+        f"🌅 <b>শুভ সকাল! আজকের শীর্ষ ২০টি এআই ও ওপেন-সোর্স আপডেট</b>\n"
+        f"📅 <i>তারিখ: {today_str}</i>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"নিচে গত ২৪ ঘণ্টার সবচেয়ে গুরুত্বপূর্ণ এআই আবিষ্কার ও ওপেন-সোর্স মডেলের হেডলাইন দেওয়া হলো।\n"
-        f"যে যে নিউজের **১০-১৫ লাইনের গভীর বাংলা সামারি** পড়তে চান, সেগুলোতে টিক দিয়ে নিচে **সাবমিট** বাটনে চাপ দিন:\n"
+        f"নিচে গত ২৪ ঘণ্টার সবচেয়ে গুরুত্বপূর্ণ এআই আবিষ্কার ও ওপেন-সোর্স মডেলের হেডলাইন দেওয়া হলো।\n\n"
+        f"যে যে নিউজের <b>১০-১৫ লাইনের গভীর বাংলা সামারি</b> পড়তে চান, সেগুলোতে টিক দিয়ে নিচে <b>সাবমিট</b> বাটনে চাপ দিন:\n"
     )
     
     markup = build_news_keyboard(chat_id, news_items)
-    await bot.send_message(chat_id=chat_id, text=news_header, reply_markup=markup, parse_mode="Markdown")
+    await safe_send_message(bot, chat_id=chat_id, text=news_header, reply_markup=markup)
     
-    # 2. Collect & Send BD & Global Remote Hackathons/Competitions
-    events = collect_hackathons_and_competitions()
+    # 2. Collect & Send BD & Global Remote Hackathons/Competitions in background thread
+    events = await loop.run_in_executor(None, collect_hackathons_and_competitions)
     
-    events_text = (
-        f"🏆 **চলমান এআই হ্যাকাথন ও প্রতিযোগিতা (বাংলাদেশ ও গ্লোবাল রিমোট)**\n"
-        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"*বাংলাদেশ থেকে ঘরে বসে অনলাইনে অথবা সরাসরি অংশ নেওয়ার শীর্ষ সুযোগসমূহ:*\n\n"
-    )
-    
-    for idx, ev in enumerate(events, start=1):
-        events_text += (
-            f"🎯 **{idx}. {ev['name']}**\n"
-            f"   🏢 **আয়োজক:** {ev['organizer']}\n"
-            f"   📍 **ধরন:** {ev['location_type']}\n"
-            f"   💰 **পুরস্কার:** {ev['prize_pool']}\n"
-            f"   ⏰ **ডেডলাইন:** {ev['deadline']}\n"
-            f"   👉 [অংশগ্রহণ / রেজিস্ট্রেশন লিংক]({ev['url']})\n\n"
+    if events:
+        events_text = (
+            f"🏆 <b>চলমান এআই হ্যাকাথন ও প্রতিযোগিতা (বাংলাদেশ ও গ্লোবাল রিমোট)</b>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+            f"<i>বাংলাদেশ থেকে ঘরে বসে অনলাইনে অথবা সরাসরি অংশ নেওয়ার শীর্ষ সুযোগসমূহ:</i>\n\n"
         )
         
-    await bot.send_message(chat_id=chat_id, text=events_text, parse_mode="Markdown", disable_web_page_preview=True)
+        for idx, ev in enumerate(events, start=1):
+            name_escaped = html.escape(ev['name'])
+            org_escaped = html.escape(ev['organizer'])
+            loc_escaped = html.escape(ev['location_type'])
+            prize_escaped = html.escape(ev['prize_pool'])
+            deadline_escaped = html.escape(ev['deadline'])
+            
+            events_text += (
+                f"🎯 <b>{idx}. {name_escaped}</b>\n"
+                f"   🏢 <b>আয়োজক:</b> {org_escaped}\n"
+                f"   📍 <b>ধরন:</b> {loc_escaped}\n"
+                f"   💰 <b>পুরস্কার:</b> {prize_escaped}\n"
+                f"   ⏰ <b>ডেডলাইন:</b> {deadline_escaped}\n"
+                f"   👉 <a href=\"{ev['url']}\">অংশগ্রহণ / রেজিস্ট্রেশন লিংক</a>\n\n"
+            )
+            
+        await safe_send_message(bot, chat_id=chat_id, text=events_text, disable_web_page_preview=True)
+        
     logger.info("Daily digest dispatched successfully.")
 
 async def handle_news_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
@@ -204,22 +240,23 @@ async def handle_news_submit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     await query.answer(f"✅ {len(selected_ids)}টি নিউজের সামারি তৈরি হচ্ছে...")
     
-    # Notify user in chat
     await context.bot.send_message(
         chat_id=user_id,
-        text=f"⏳ আপনার নির্বাচিত **{len(selected_ids)}টি** নিউজের ১০-১৫ লাইনের গভীর বাংলা সামারি তৈরি হচ্ছে, দয়া করে একটু অপেক্ষা করুন..."
+        text=f"⏳ আপনার নির্বাচিত <b>{len(selected_ids)}টি</b> নিউজের ১০-১৫ লাইনের গভীর বাংলা সামারি তৈরি হচ্ছে, দয়া করে একটু অপেক্ষা করুন...",
+        parse_mode="HTML"
     )
     
+    loop = asyncio.get_running_loop()
     for idx, nid in enumerate(selected_ids, start=1):
-        res = get_or_create_news_summary(nid)
+        res = await loop.run_in_executor(None, get_or_create_news_summary, nid)
         title = res.get("title", "নিউজ শিরোনাম")
         summary = res.get("summary", "সামারি পাওয়া যায়নি।")
         url = res.get("url", "")
         
         msg = (
-            f"📰 **[{idx}/{len(selected_ids)}] {title}**\n"
+            f"📰 <b>[{idx}/{len(selected_ids)}] {html.escape(title)}</b>\n"
             f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-            f"{summary}"
+            f"{html.escape(summary)}"
         )
         
         reply_markup = None
@@ -228,11 +265,11 @@ async def handle_news_submit(update: Update, context: ContextTypes.DEFAULT_TYPE)
                 [InlineKeyboardButton("🔗 মূল ওয়েবসাইট / রিসার্চ পেপার পড়ুন", url=url)]
             ])
             
-        await context.bot.send_message(
+        await safe_send_message(
+            context.bot,
             chat_id=user_id,
             text=msg,
-            reply_markup=reply_markup,
-            parse_mode="Markdown"
+            reply_markup=reply_markup
         )
         
     # Clear user selection after dispatch
@@ -240,13 +277,20 @@ async def handle_news_submit(update: Update, context: ContextTypes.DEFAULT_TYPE)
 
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Manual trigger command `/news` for testing and on-demand digest."""
-    if update.effective_user.id != ALLOWED_USER_ID: return
-    status_msg = await update.message.reply_text("🔎 আজকের টপ ২০টি এআই নিউজ ও হ্যাকাথন সংগ্রহ করছি...")
-    await send_daily_news_digest(context.bot, update.effective_chat.id)
+    if update.effective_user.id != ALLOWED_USER_ID:
+        logger.warning(f"Unauthorized access attempt by {update.effective_user.id}")
+        return
+        
     try:
-        await status_msg.delete()
-    except Exception:
-        pass
+        status_msg = await update.message.reply_text("🔎 আজকের টপ ২০টি এআই নিউজ ও হ্যাকাথন সংগ্রহ করছি... অনুগ্রহ করে কয়েক সেকেন্ড অপেক্ষা করুন।")
+        await send_daily_news_digest(context.bot, update.effective_chat.id)
+        try:
+            await status_msg.delete()
+        except Exception:
+            pass
+    except Exception as e:
+        logger.error(f"Error in news_command: {e}", exc_info=True)
+        await update.message.reply_text(f"❌ নিউজ লোড করতে সাময়িক সমস্যা হয়েছে: {e}")
 
 # ==========================================
 # BACKGROUND SCHEDULERS
