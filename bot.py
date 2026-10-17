@@ -288,9 +288,23 @@ from http.server import BaseHTTPRequestHandler, HTTPServer
 
 class HealthCheckHandler(BaseHTTPRequestHandler):
     def do_GET(self):
+        body = b"OK"
         self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", str(len(body)))
+        self.send_header("Connection", "close")
         self.end_headers()
-        self.wfile.write(b"Bot is running 24/7 with Daily AI News and Hackathons Intelligence!")
+        self.wfile.write(body)
+
+    def do_HEAD(self):
+        self.send_response(200)
+        self.send_header("Content-Type", "text/plain; charset=utf-8")
+        self.send_header("Content-Length", "2")
+        self.send_header("Connection", "close")
+        self.end_headers()
+
+    def log_message(self, format, *args):
+        pass # Suppress noisy healthcheck logs
         
 def run_dummy_server():
     port = int(os.getenv("PORT", 8080))
