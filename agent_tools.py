@@ -15,12 +15,24 @@ def init_db():
         publish_date TEXT NOT NULL,
         category TEXT NOT NULL,
         title TEXT NOT NULL,
+        title_bn TEXT,
+        short_summary_bn TEXT,
         source_name TEXT NOT NULL,
         url TEXT UNIQUE NOT NULL,
         cached_summary TEXT,
         created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
     )''')
     cursor.execute('''CREATE INDEX IF NOT EXISTS idx_daily_news_date ON daily_news(publish_date)''')
+    
+    # Safe alter table for existing DB
+    try:
+        cursor.execute("ALTER TABLE daily_news ADD COLUMN title_bn TEXT")
+    except Exception:
+        pass
+    try:
+        cursor.execute("ALTER TABLE daily_news ADD COLUMN short_summary_bn TEXT")
+    except Exception:
+        pass
 
     cursor.execute('''CREATE TABLE IF NOT EXISTS daily_events (
         id INTEGER PRIMARY KEY AUTOINCREMENT,

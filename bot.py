@@ -97,13 +97,13 @@ def build_news_keyboard(user_id: int, news_items: list) -> InlineKeyboardMarkup:
         nid = item["id"]
         is_selected = nid in selected_ids
         checkbox = "✅" if is_selected else "⬜"
-        # Truncate title cleanly for button width
-        raw_title = item['title'].replace("[Paper/Model] ", "")
-        btn_text = f"{checkbox} {idx}. {raw_title[:38]}..." if len(raw_title) > 38 else f"{checkbox} {idx}. {raw_title}"
+        title_bn = item.get('title_bn') or item['title']
+        clean_title = title_bn.replace("[Paper/Model] ", "").strip()
+        btn_text = f"{checkbox} {idx}. {clean_title[:30]}..." if len(clean_title) > 30 else f"{checkbox} {idx}. {clean_title}"
         keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"toggle:{nid}")])
         
     count = len(selected_ids)
-    submit_text = f"🚀 নির্বাচিত নিউজের সামারি দাও ({count}টি সিলেক্টেড)" if count > 0 else "🚀 নির্বাচিত নিউজের সামারি দাও (০টি সিলেক্টেড)"
+    submit_text = f"🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও ({count}টি)" if count > 0 else "🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও (০টি সিলেক্টেড)"
     keyboard.append([InlineKeyboardButton(submit_text, callback_data="submit_news")])
     
     return InlineKeyboardMarkup(keyboard)
@@ -134,7 +134,7 @@ async def safe_send_message(bot, chat_id: int, text: str, reply_markup=None, dis
 async def send_daily_news_digest(bot, chat_id: int):
     """
     Core function that collects Top 20 Global AI News and BD/Global Remote Hackathons,
-    then dispatches two separate, beautifully formatted messages.
+    then dispatches separate, beautifully formatted messages with Bengali titles and short summaries.
     """
     logger.info("Starting Daily AI News & Hackathons Digest dispatch...")
     loop = asyncio.get_running_loop()
@@ -147,19 +147,61 @@ async def send_daily_news_digest(bot, chat_id: int):
     USER_SELECTIONS[chat_id] = set()
     
     if not news_items:
-        await bot.send_message(chat_id=chat_id, text="⚠️ আজকের এআই নিউজগুলো লোড হতে একটু সময় নিচ্ছে। অনুগ্রহ করে কয়েক মিনিট পর আবার চেষ্টা করুন।")
+        await bot.send_message(chat_id=chat_id, text="⚠️ আজকের এআই নিউজগুলো সংগ্রহ করতে সমস্যা হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।")
         return
-        
-    news_header = (
-        f"🌅 <b>শুভ সকাল! আজকের শীর্ষ ২০টি এআই ও ওপেন-সোর্স আপডেট</b>\n"
+
+    # Build clear Bengali news digest with 1-2 line explanations
+    header = (
+        f"🌅 <b>আজকের শীর্ষ ২০টি এআই ও ওপেন-সোর্স আপডেট</b>\n"
         f"📅 <i>তারিখ: {today_str}</i>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    
+    news_body = ""
+    for idx, item in enumerate(news_items, start=1):
+        t_bn = html.escape(item.get('title_bn') or item['title'])
+        s_bn = html.escape(item.get('short_summary_bn') or '')
+        news_body += f"📌 <b>{idx}. {t_bn}</b>\n"
+        if s_bn:
+            news_body += f"💡 <i>{s_bn}</i>\n\n"
+        else:
+            news_body += "\n"
+            
+    footer = (
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"নিচে গত ২৪ ঘণ্টার সবচেয়ে গুরুত্বপূর্ণ এআই আবিষ্কার ও ওপেন-সোর্স মডেলের হেডলাইন দেওয়া হলো।\n\n"
-        f"যে যে নিউজের <b>১০-১৫ লাইনের গভীর বাংলা সামারি</b> পড়তে চান, সেগুলোতে টিক দিয়ে নিচে <b>সাবমিট</b> বাটনে চাপ দিন:\n"
+        f"👇 <b>যে যে নিউজের ১০-১৫ লাইনের গভীর বাংলা সামারি পড়তে চান, নিচের বাটনে টিক (✅) দিয়ে সাবমিট বাটনে চাপ দিন:</b>"
     )
     
     markup = build_news_keyboard(chat_id, news_items)
-    await safe_send_message(bot, chat_id=chat_id, text=news_header, reply_markup=markup)
+    
+    # Check if total length exceeds Telegram 4096 limit
+    full_message = header + news_body + footer
+    if len(full_message) <= 4000:
+        await safe_send_message(bot, chat_id=chat_id, text=full_message, reply_markup=markup)
+    else:
+        # Split into two parts if long
+        half = len(news_items) // 2
+        part1_items = news_items[:half]
+        part2_items = news_items[half:]
+        
+        part1_text = header
+        for idx, item in enumerate(part1_items, start=1):
+            t_bn = html.escape(item.get('title_bn') or item['title'])
+            s_bn = html.escape(item.get('short_summary_bn') or '')
+            part1_text += f"📌 <b>{idx}. {t_bn}</b>\n💡 <i>{s_bn}</i>\n\n"
+            
+        part2_text = (
+            f"📅 <i>শীর্ষ এআই আপডেট (পর্ব ২):</i>\n"
+            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+        )
+        for idx, item in enumerate(part2_items, start=half+1):
+            t_bn = html.escape(item.get('title_bn') or item['title'])
+            s_bn = html.escape(item.get('short_summary_bn') or '')
+            part2_text += f"📌 <b>{idx}. {t_bn}</b>\n💡 <i>{s_bn}</i>\n\n"
+        part2_text += footer
+        
+        await safe_send_message(bot, chat_id=chat_id, text=part1_text)
+        await safe_send_message(bot, chat_id=chat_id, text=part2_text, reply_markup=markup)
     
     # 2. Collect & Send BD & Global Remote Hackathons/Competitions in background thread
     events = await loop.run_in_executor(None, collect_hackathons_and_competitions)
@@ -192,7 +234,10 @@ async def send_daily_news_digest(bot, chat_id: int):
     logger.info("Daily digest dispatched successfully.")
 
 async def handle_news_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
-    """Handles real-time toggling of news checkboxes (⬜ <-> ✅)."""
+    """
+    Handles real-time toggling of news checkboxes (⬜ <-> ✅).
+    Directly updates existing keyboard state without depending on database queries.
+    """
     query = update.callback_query
     await query.answer()
     
@@ -212,19 +257,35 @@ async def handle_news_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     else:
         USER_SELECTIONS[user_id].add(news_id)
         
-    # Fetch current day's news items to rebuild markup
-    today_str = get_current_date_str()
-    conn = sqlite3.connect("memory.db")
-    cursor = conn.cursor()
-    cursor.execute("SELECT id, title, source_name, url FROM daily_news WHERE publish_date = ? AND category = 'GLOBAL_AI' ORDER BY id ASC LIMIT 20", (today_str,))
-    rows = cursor.fetchall()
-    conn.close()
+    current_markup = query.message.reply_markup
+    if not current_markup:
+        return
+        
+    new_keyboard = []
+    selected_set = USER_SELECTIONS[user_id]
     
-    news_items = [{"id": r[0], "title": r[1], "source": r[2], "url": r[3]} for r in rows]
-    new_markup = build_news_keyboard(user_id, news_items)
-    
+    for row in current_markup.inline_keyboard:
+        new_row = []
+        for btn in row:
+            if btn.callback_data.startswith("toggle:"):
+                btn_nid = int(btn.callback_data.split(":")[1])
+                is_sel = btn_nid in selected_set
+                text = btn.text
+                if is_sel and text.startswith("⬜"):
+                    text = "✅" + text[1:]
+                elif not is_sel and text.startswith("✅"):
+                    text = "⬜" + text[1:]
+                new_row.append(InlineKeyboardButton(text=text, callback_data=btn.callback_data))
+            elif btn.callback_data == "submit_news":
+                count = len(selected_set)
+                submit_text = f"🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও ({count}টি)" if count > 0 else "🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও (০টি সিলেক্টেড)"
+                new_row.append(InlineKeyboardButton(text=submit_text, callback_data="submit_news"))
+            else:
+                new_row.append(btn)
+        new_keyboard.append(new_row)
+        
     try:
-        await query.edit_message_reply_markup(reply_markup=new_markup)
+        await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
     except Exception as e:
         logger.warning(f"Error editing reply markup: {e}")
 

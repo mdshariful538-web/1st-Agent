@@ -1,3 +1,5 @@
+import os
+import json
 import sqlite3
 import datetime
 import logging
@@ -5,10 +7,72 @@ import requests
 import re
 from typing import List, Dict, Any
 from duckduckgo_search import DDGS
+from dotenv import load_dotenv
+import google.generativeai as genai
 
+load_dotenv()
 logger = logging.getLogger(__name__)
 
 DB_PATH = "memory.db"
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+if GEMINI_API_KEY:
+    genai.configure(api_key=GEMINI_API_KEY)
+
+def batch_generate_bengali_insights(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    """
+    Uses Gemini to translate and generate clear Bengali headlines and 1-2 line summaries for news items.
+    """
+    if not items or not GEMINI_API_KEY:
+        for it in items:
+            it["title_bn"] = it.get("title")
+            it["short_summary_bn"] = "বিস্তারিত পড়তে নিচে টিক দিয়ে সাবমিট বাটনে চাপ দিন।"
+        return items
+
+    prompt_items = []
+    for idx, it in enumerate(items, 1):
+        prompt_items.append(f"{idx}. Title: {it['title']} (Source: {it['source']})")
+    
+    prompt = f"""
+তুমি একজন দক্ষ টেক জার্নালিস্ট ও এআই বিশেষজ্ঞ।
+নিচে গত ২৪ ঘণ্টার এআই এবং ওপেন সোর্স প্রযুক্তির কিছু গুরুত্বপূর্ণ ইংরেজি খবরের শিরোনাম দেওয়া হলো।
+প্রতিটি খবরের জন্য ২টি জিনিস বাংলায় তৈরি করো:
+১. "title_bn": সহজবোধ্য, আকর্ষণীয় বাংলা শিরোনাম (অনুবাদ নয়, বরং খবরটি কী নিয়ে তা সহজে বাংলায় ৬-১০ শব্দে প্রকাশ করো)।
+২. "short_summary_bn": মাত্র ১ থেকে ২ লাইনের মধ্যে সহজ বাংলায় সারসংক্ষেপ যাতে যে কেউ দেখেই বুঝতে পারে আসলে কী ঘটেছে বা কী আবিষ্কার হয়েছে।
+
+খবরের তালিকা:
+{chr(10).join(prompt_items)}
+
+আউটপুটটি অবশ্যই STRICT JSON ফরম্যাটে একটি লিস্ট আকারে দেবে:
+[
+  {{
+    "index": 1,
+    "title_bn": "সহজ বাংলা শিরোনাম",
+    "short_summary_bn": "১-২ লাইনের সহজ বাংলা সারসংক্ষেপ"
+  }}
+]
+শুধুমাত্র ভ্যালিড JSON ছাড়া আর কোনো বাড়তি টেক্সট বা ব্যাকটিক্স দেবে না।
+"""
+    try:
+        model = genai.GenerativeModel("gemini-3.8-flash")
+        resp = model.generate_content(prompt)
+        text = resp.text.strip()
+        if text.startswith("```"):
+            text = re.sub(r"^```[a-zA-Z]*\n?", "", text)
+            text = re.sub(r"\n?```$", "", text).strip()
+        insights = json.loads(text)
+        
+        for insight in insights:
+            idx = insight.get("index", 0) - 1
+            if 0 <= idx < len(items):
+                items[idx]["title_bn"] = insight.get("title_bn", items[idx]["title"])
+                items[idx]["short_summary_bn"] = insight.get("short_summary_bn", "")
+    except Exception as e:
+        logger.warning(f"Batch Bengali insights generation error: {e}")
+        for it in items:
+            it["title_bn"] = it.get("title_bn") or it["title"]
+            it["short_summary_bn"] = it.get("short_summary_bn") or "বিস্তারিত পড়তে নিচে টিক দিয়ে সাবমিট বাটনে চাপ দিন।"
+
+    return items
 
 def get_current_date_str() -> str:
     """Returns today's date in YYYY-MM-DD for Asia/Dhaka or UTC."""
@@ -133,42 +197,51 @@ def collect_top_20_ai_news() -> List[Dict[str, Any]]:
         
     top_20 = unique_stories[:20]
     
+    # Generate Bengali headlines and 1-2 line summaries using Gemini
+    top_20 = batch_generate_bengali_insights(top_20)
+    
     # Save to SQLite Database
     today_str = get_current_date_str()
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
     
-    saved_items = []
     for item in top_20:
         title = item["title"]
+        title_bn = item.get("title_bn") or title
+        short_summary_bn = item.get("short_summary_bn") or ""
         url = item["url"]
         source = item["source"]
         try:
             cursor.execute("""
-                INSERT INTO daily_news (publish_date, category, title, source_name, url)
-                VALUES (?, 'GLOBAL_AI', ?, ?, ?)
-                ON CONFLICT(url) DO UPDATE SET title=excluded.title
-            """, (today_str, title, source, url))
+                INSERT INTO daily_news (publish_date, category, title, title_bn, short_summary_bn, source_name, url)
+                VALUES (?, 'GLOBAL_AI', ?, ?, ?, ?, ?)
+                ON CONFLICT(url) DO UPDATE SET 
+                    title=excluded.title,
+                    title_bn=excluded.title_bn,
+                    short_summary_bn=excluded.short_summary_bn
+            """, (today_str, title, title_bn, short_summary_bn, source, url))
             conn.commit()
         except Exception as e:
             logger.error(f"Error storing news item: {e}")
             
-    # Retrieve saved IDs
+    # Retrieve saved IDs (latest 20)
     cursor.execute("""
-        SELECT id, title, source_name, url 
+        SELECT id, title, title_bn, short_summary_bn, source_name, url 
         FROM daily_news 
-        WHERE publish_date = ? AND category = 'GLOBAL_AI'
-        ORDER BY id ASC LIMIT 20
-    """, (today_str,))
+        ORDER BY id DESC LIMIT 20
+    """)
     rows = cursor.fetchall()
     conn.close()
     
-    for r in rows:
+    saved_items = []
+    for r in reversed(rows):
         saved_items.append({
             "id": r[0],
             "title": r[1],
-            "source": r[2],
-            "url": r[3]
+            "title_bn": r[2] or r[1],
+            "short_summary_bn": r[3] or "",
+            "source": r[4],
+            "url": r[5]
         })
         
     return saved_items

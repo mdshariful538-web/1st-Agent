@@ -101,21 +101,23 @@ def get_or_create_news_summary(news_id: int) -> dict:
     """
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
-    cursor.execute("SELECT id, title, url, cached_summary FROM daily_news WHERE id = ?", (news_id,))
+    cursor.execute("SELECT id, title, title_bn, url, cached_summary FROM daily_news WHERE id = ?", (news_id,))
     row = cursor.fetchone()
     
     if not row:
         conn.close()
         return {"error": "নিউজটি খুঁজে পাওয়া যায়নি।"}
     
-    nid, title, url, cached_summary = row
+    nid, title, title_bn, url, cached_summary = row
+    display_title = title_bn or title
     
     # If already cached, return immediately
     if cached_summary and len(cached_summary.strip()) > 50:
         conn.close()
         return {
             "id": nid,
-            "title": title,
+            "title": display_title,
+            "title_bn": display_title,
             "url": url,
             "summary": cached_summary
         }
