@@ -89,27 +89,38 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE) -> 
 # ==========================================
 
 def build_news_keyboard(user_id: int, news_items: list) -> InlineKeyboardMarkup:
-    """Builds the 20-headline checkbox keyboard with a dynamic submit button."""
+    """Builds a compact, clean 5-column checkbox grid for all news items plus a submit button."""
     selected_ids = USER_SELECTIONS.get(user_id, set())
     keyboard = []
+    current_row = []
+    
+    bn_digits = str.maketrans('0123456789', '০১২৩৪৫৬৭৮৯')
     
     for idx, item in enumerate(news_items, start=1):
         nid = item["id"]
         is_selected = nid in selected_ids
-        checkbox = "✅" if is_selected else "⬜"
-        title_bn = item.get('title_bn') or item['title']
-        clean_title = title_bn.replace("[Paper/Model] ", "").strip()
-        btn_text = f"{checkbox} {idx}. {clean_title[:30]}..." if len(clean_title) > 30 else f"{checkbox} {idx}. {clean_title}"
-        keyboard.append([InlineKeyboardButton(btn_text, callback_data=f"toggle:{nid}")])
+        symbol = "✅" if is_selected else "⬜"
+        bn_idx = str(idx).translate(bn_digits)
+        btn_text = f"{symbol} {bn_idx}"
+        current_row.append(InlineKeyboardButton(btn_text, callback_data=f"toggle:{nid}:{idx}"))
+        
+        if len(current_row) == 5:
+            keyboard.append(current_row)
+            current_row = []
+            
+    if current_row:
+        keyboard.append(current_row)
         
     count = len(selected_ids)
-    submit_text = f"🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও ({count}টি)" if count > 0 else "🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও (০টি সিলেক্টেড)"
+    bn_count = str(count).translate(bn_digits)
+    submit_text = f"🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও ({bn_count}টি সিলেক্টেড)" if count > 0 else "🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও (০টি সিলেক্টেড)"
     keyboard.append([InlineKeyboardButton(submit_text, callback_data="submit_news")])
     
     return InlineKeyboardMarkup(keyboard)
 
 import asyncio
 import html
+import re
 
 async def safe_send_message(bot, chat_id: int, text: str, reply_markup=None, disable_web_page_preview=False):
     """Safely sends a message using HTML mode with automatic plain-text fallback."""
@@ -133,8 +144,8 @@ async def safe_send_message(bot, chat_id: int, text: str, reply_markup=None, dis
 
 async def send_daily_news_digest(bot, chat_id: int):
     """
-    Core function that collects Top 20 Global AI News and BD/Global Remote Hackathons,
-    then dispatches separate, beautifully formatted messages with Bengali titles and short summaries.
+    Dispatches the top 20 AI news in clean, readable Bengali with 1-2 line summaries,
+    followed by a compact interactive 4-row checkbox grid.
     """
     logger.info("Starting Daily AI News & Hackathons Digest dispatch...")
     loop = asyncio.get_running_loop()
@@ -150,58 +161,41 @@ async def send_daily_news_digest(bot, chat_id: int):
         await bot.send_message(chat_id=chat_id, text="⚠️ আজকের এআই নিউজগুলো সংগ্রহ করতে সমস্যা হয়েছে। অনুগ্রহ করে কিছুক্ষণ পর আবার চেষ্টা করুন।")
         return
 
-    # Build clear Bengali news digest with 1-2 line explanations
-    header = (
-        f"🌅 <b>আজকের শীর্ষ ২০টি এআই ও ওপেন-সোর্স আপডেট</b>\n"
+    # Split into Part 1 (1-10) and Part 2 (11-20) so summaries are 100% visible and unclipped
+    half = len(news_items) // 2
+    part1_items = news_items[:half]
+    part2_items = news_items[half:]
+    
+    # Part 1 Message
+    part1_text = (
+        f"🌅 <b>আজকের শীর্ষ ২০টি এআই ও ওপেন-সোর্স আপডেট (পর্ব ১)</b>\n"
         f"📅 <i>তারিখ: {today_str}</i>\n"
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
     )
-    
-    news_body = ""
-    for idx, item in enumerate(news_items, start=1):
+    for idx, item in enumerate(part1_items, start=1):
         t_bn = html.escape(item.get('title_bn') or item['title'])
         s_bn = html.escape(item.get('short_summary_bn') or '')
-        news_body += f"📌 <b>{idx}. {t_bn}</b>\n"
-        if s_bn:
-            news_body += f"💡 <i>{s_bn}</i>\n\n"
-        else:
-            news_body += "\n"
-            
-    footer = (
+        part1_text += f"📌 <b>{idx}. {t_bn}</b>\n💡 <i>{s_bn}</i>\n👉 <i>বিস্তারিত পড়তে:</i> /read_{idx}\n\n"
+        
+    await safe_send_message(bot, chat_id=chat_id, text=part1_text)
+    
+    # Part 2 Message with Attached Grid
+    part2_text = (
+        f"📅 <b>শীর্ষ এআই ও ওপেন-সোর্স আপডেট (পর্ব ২)</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
+    )
+    for idx, item in enumerate(part2_items, start=half+1):
+        t_bn = html.escape(item.get('title_bn') or item['title'])
+        s_bn = html.escape(item.get('short_summary_bn') or '')
+        part2_text += f"📌 <b>{idx}. {t_bn}</b>\n💡 <i>{s_bn}</i>\n👉 <i>বিস্তারিত পড়তে:</i> /read_{idx}\n\n"
+        
+    part2_text += (
         f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
-        f"👇 <b>যে যে নিউজের ১০-১৫ লাইনের গভীর বাংলা সামারি পড়তে চান, নিচের বাটনে টিক (✅) দিয়ে সাবমিট বাটনে চাপ দিন:</b>"
+        f"👇 <b>যে যে নিউজের ১০-১৫ লাইনের গভীর বাংলা সামারি পড়তে চান, নিচের নম্বরে টিক (✅) দিন:</b>"
     )
     
     markup = build_news_keyboard(chat_id, news_items)
-    
-    # Check if total length exceeds Telegram 4096 limit
-    full_message = header + news_body + footer
-    if len(full_message) <= 4000:
-        await safe_send_message(bot, chat_id=chat_id, text=full_message, reply_markup=markup)
-    else:
-        # Split into two parts if long
-        half = len(news_items) // 2
-        part1_items = news_items[:half]
-        part2_items = news_items[half:]
-        
-        part1_text = header
-        for idx, item in enumerate(part1_items, start=1):
-            t_bn = html.escape(item.get('title_bn') or item['title'])
-            s_bn = html.escape(item.get('short_summary_bn') or '')
-            part1_text += f"📌 <b>{idx}. {t_bn}</b>\n💡 <i>{s_bn}</i>\n\n"
-            
-        part2_text = (
-            f"📅 <i>শীর্ষ এআই আপডেট (পর্ব ২):</i>\n"
-            f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n\n"
-        )
-        for idx, item in enumerate(part2_items, start=half+1):
-            t_bn = html.escape(item.get('title_bn') or item['title'])
-            s_bn = html.escape(item.get('short_summary_bn') or '')
-            part2_text += f"📌 <b>{idx}. {t_bn}</b>\n💡 <i>{s_bn}</i>\n\n"
-        part2_text += footer
-        
-        await safe_send_message(bot, chat_id=chat_id, text=part1_text)
-        await safe_send_message(bot, chat_id=chat_id, text=part2_text, reply_markup=markup)
+    await safe_send_message(bot, chat_id=chat_id, text=part2_text, reply_markup=markup)
     
     # 2. Collect & Send BD & Global Remote Hackathons/Competitions in background thread
     events = await loop.run_in_executor(None, collect_hackathons_and_competitions)
@@ -236,27 +230,34 @@ async def send_daily_news_digest(bot, chat_id: int):
 async def handle_news_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """
     Handles real-time toggling of news checkboxes (⬜ <-> ✅).
-    Directly updates existing keyboard state without depending on database queries.
+    Provides instant tactile toast alert and regenerates clean grid without string errors.
     """
     query = update.callback_query
-    await query.answer()
-    
-    user_id = update.effective_user.id
     data = query.data
     
     if not data.startswith("toggle:"):
         return
         
-    news_id = int(data.split(":")[1])
+    parts = data.split(":")
+    news_id = int(parts[1])
+    idx_str = parts[2] if len(parts) > 2 else str(news_id)
+    bn_digits = str.maketrans('0123456789', '০১২৩৪৫৬৭৮৯')
+    bn_idx = idx_str.translate(bn_digits)
     
+    user_id = update.effective_user.id
     if user_id not in USER_SELECTIONS:
         USER_SELECTIONS[user_id] = set()
         
     if news_id in USER_SELECTIONS[user_id]:
         USER_SELECTIONS[user_id].remove(news_id)
+        toast = f"⬜ {bn_idx} নম্বর আন-সিলেক্ট করা হয়েছে"
     else:
         USER_SELECTIONS[user_id].add(news_id)
+        toast = f"✅ {bn_idx} নম্বর সিলেক্ট করা হয়েছে"
         
+    # Instant popup notification on user screen
+    await query.answer(toast)
+    
     current_markup = query.message.reply_markup
     if not current_markup:
         return
@@ -268,18 +269,18 @@ async def handle_news_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE)
         new_row = []
         for btn in row:
             if btn.callback_data.startswith("toggle:"):
-                btn_nid = int(btn.callback_data.split(":")[1])
-                is_sel = btn_nid in selected_set
-                text = btn.text
-                if is_sel and text.startswith("⬜"):
-                    text = "✅" + text[1:]
-                elif not is_sel and text.startswith("✅"):
-                    text = "⬜" + text[1:]
-                new_row.append(InlineKeyboardButton(text=text, callback_data=btn.callback_data))
+                btn_parts = btn.callback_data.split(":")
+                btn_nid = int(btn_parts[1])
+                b_idx = btn_parts[2] if len(btn_parts) > 2 else str(btn_nid)
+                b_bn = b_idx.translate(bn_digits)
+                
+                symbol = "✅" if btn_nid in selected_set else "⬜"
+                new_row.append(InlineKeyboardButton(f"{symbol} {b_bn}", callback_data=btn.callback_data))
             elif btn.callback_data == "submit_news":
                 count = len(selected_set)
-                submit_text = f"🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও ({count}টি)" if count > 0 else "🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও (০টি সিলেক্টেড)"
-                new_row.append(InlineKeyboardButton(text=submit_text, callback_data="submit_news"))
+                bn_count = str(count).translate(bn_digits)
+                submit_text = f"🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও ({bn_count}টি সিলেক্টেড)" if count > 0 else "🚀 নির্বাচিত নিউজের বিস্তারিত সামারি দাও (০টি সিলেক্টেড)"
+                new_row.append(InlineKeyboardButton(submit_text, callback_data="submit_news"))
             else:
                 new_row.append(btn)
         new_keyboard.append(new_row)
@@ -287,7 +288,8 @@ async def handle_news_toggle(update: Update, context: ContextTypes.DEFAULT_TYPE)
     try:
         await query.edit_message_reply_markup(reply_markup=InlineKeyboardMarkup(new_keyboard))
     except Exception as e:
-        logger.warning(f"Error editing reply markup: {e}")
+        if "Message is not modified" not in str(e):
+            logger.error(f"Error editing reply markup: {e}", exc_info=True)
 
 async def handle_news_submit(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Handles the submission of selected news items and dispatches 10-15 line summaries."""
@@ -335,6 +337,83 @@ async def handle_news_submit(update: Update, context: ContextTypes.DEFAULT_TYPE)
         
     # Clear user selection after dispatch
     USER_SELECTIONS[user_id] = set()
+
+async def handle_read_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
+    """Handles direct reading of a specific news item via /read_<num> or /read <num>."""
+    if update.effective_user.id != ALLOWED_USER_ID:
+        return
+        
+    text = (update.message.text or "").strip()
+    idx = None
+    
+    m = re.match(r"^/read_(\d+)$", text)
+    if m:
+        idx = int(m.group(1))
+    elif context.args and len(context.args) > 0 and context.args[0].isdigit():
+        idx = int(context.args[0])
+    elif re.match(r"^/read\s+(\d+)$", text):
+        m2 = re.match(r"^/read\s+(\d+)$", text)
+        idx = int(m2.group(1))
+        
+    if idx is None:
+        await update.message.reply_text("💡 কোনো নিউজের বিস্তারিত পড়তে `/read_<নম্বর>` লিখুন, যেমন: `/read_1`")
+        return
+        
+    # Fetch latest 20 items from database
+    conn = sqlite3.connect("memory.db")
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, title, title_bn, url 
+        FROM daily_news 
+        ORDER BY id DESC LIMIT 20
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    
+    if not rows:
+        await update.message.reply_text("⚠️ ডাটাবেসে কোনো নিউজ পাওয়া যায়নি। প্রথমে `/news` দিন।")
+        return
+        
+    sorted_items = list(reversed(rows))
+    if idx < 1 or idx > len(sorted_items):
+        await update.message.reply_text(f"⚠️ {idx} নম্বরের কোনো নিউজ পাওয়া যায়নি। অনুগ্রহ করে ১ থেকে {len(sorted_items)} এর মধ্যে নম্বর দিন।")
+        return
+        
+    item = sorted_items[idx - 1]
+    nid = item[0]
+    
+    bn_digits = str.maketrans('0123456789', '০১২৩৪৫৬৭৮৯')
+    bn_idx = str(idx).translate(bn_digits)
+    
+    status_msg = await update.message.reply_text(f"⏳ <b>{bn_idx} নম্বর</b> নিউজের ১০-১৫ লাইনের গভীর বাংলা সামারি তৈরি হচ্ছে...", parse_mode="HTML")
+    loop = asyncio.get_running_loop()
+    res = await loop.run_in_executor(None, get_or_create_news_summary, nid)
+    title = res.get("title", item[2] or item[1])
+    summary = res.get("summary", "সামারি পাওয়া যায়নি।")
+    url = res.get("url", item[3])
+    
+    msg = (
+        f"📰 <b>[{bn_idx}/{len(sorted_items)}] {html.escape(title)}</b>\n"
+        f"━━━━━━━━━━━━━━━━━━━━━━━━━━\n"
+        f"{html.escape(summary)}"
+    )
+    
+    reply_markup = None
+    if url:
+        reply_markup = InlineKeyboardMarkup([
+            [InlineKeyboardButton("🔗 মূল ওয়েবসাইট / রিসার্চ পেপার পড়ুন", url=url)]
+        ])
+        
+    await safe_send_message(
+        context.bot,
+        chat_id=update.effective_chat.id,
+        text=msg,
+        reply_markup=reply_markup
+    )
+    try:
+        await status_msg.delete()
+    except Exception:
+        pass
 
 async def news_command(update: Update, context: ContextTypes.DEFAULT_TYPE) -> None:
     """Manual trigger command `/news` for testing and on-demand digest."""
@@ -426,7 +505,9 @@ def main() -> None:
     # 3. Add Handlers
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("news", news_command))
-    application.add_handler(CallbackQueryHandler(handle_news_toggle, pattern=r"^toggle:\d+$"))
+    application.add_handler(CommandHandler("read", handle_read_command))
+    application.add_handler(MessageHandler(filters.Regex(r"^/read_\d+$"), handle_read_command))
+    application.add_handler(CallbackQueryHandler(handle_news_toggle, pattern=r"^toggle:"))
     application.add_handler(CallbackQueryHandler(handle_news_submit, pattern=r"^submit_news$"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
